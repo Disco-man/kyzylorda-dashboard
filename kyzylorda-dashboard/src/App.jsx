@@ -191,56 +191,63 @@ function App() {
             timestamp: new Date().toISOString()
           };
 
-          // Geocode the location for accurate coordinates
-          if (data.location && data.coordinates?.lat && data.coordinates?.lng) {
-            // Try geocoding first, but with timeout
-            const geocodeTimeout = setTimeout(() => {
-              console.warn("Geocoding timed out, using AI coordinates");
-              setIncidentEvents((prev) => [newEvent, ...prev]);
-              if (newEvent.coordinates.lat != null && newEvent.coordinates.lng != null) {
-                setFocusedEvent(newEvent.coordinates);
-                setHoveredId(newEvent.id);
-              }
-            }, 3000);
-
-            fetch(
-              `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(
-                `${data.location}, Kyzylorda, Kazakhstan`
-              )}`,
-              { signal: AbortSignal.timeout(2500) }
-            )
-              .then((res) => res.json())
-              .then((geoData) => {
-                clearTimeout(geocodeTimeout);
-                if (geoData[0]) {
-                  newEvent.coordinates = {
-                    lat: parseFloat(geoData[0].lat),
-                    lng: parseFloat(geoData[0].lon)
-                  };
-                  console.log("✓ Geocoded:", newEvent.street, newEvent.coordinates);
-                } else {
-                  console.log("→ Using AI coordinates (street not found in OSM)");
-                }
-                // Add to map
-                setIncidentEvents((prev) => [newEvent, ...prev]);
-                if (newEvent.coordinates.lat != null && newEvent.coordinates.lng != null) {
-                  setFocusedEvent(newEvent.coordinates);
-                  setHoveredId(newEvent.id);
-                }
-              })
-              .catch((err) => {
-                clearTimeout(geocodeTimeout);
-                console.log("→ Using AI coordinates (geocoding failed):", err.message);
-                // Use AI coordinates if geocoding fails
-                setIncidentEvents((prev) => [newEvent, ...prev]);
-                if (newEvent.coordinates.lat != null && newEvent.coordinates.lng != null) {
-                  setFocusedEvent(newEvent.coordinates);
-                  setHoveredId(newEvent.id);
-                }
-              });
-          } else {
-            // No location or no AI coordinates, add anyway
+          // Geocode the location for accurate coordinates with multiple fallback strategies
+          const addEventToMap = () => {
             setIncidentEvents((prev) => [newEvent, ...prev]);
+            if (newEvent.coordinates.lat != null && newEvent.coordinates.lng != null) {
+              setFocusedEvent(newEvent.coordinates);
+              setHoveredId(newEvent.id);
+            }
+          };
+
+          if (data.location && data.coordinates?.lat && data.coordinates?.lng) {
+            // Try multiple geocoding strategies
+            const locationClean = data.location
+              .replace(/улица\s+/gi, "")
+              .replace(/ул\.\s+/gi, "")
+              .replace(/street\s+/gi, "")
+              .trim();
+
+            const queries = [
+              `${locationClean}, Kyzylorda, Kazakhstan`,
+              `${data.location}, Kyzylorda`,
+              `${locationClean}, Kyzylorda`,
+            ];
+
+            let foundCoords = false;
+
+            (async () => {
+              for (const query of queries) {
+                if (foundCoords) break;
+                try {
+                  const res = await fetch(
+                    `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(query)}`,
+                    { signal: AbortSignal.timeout(2000) }
+                  );
+                  const geoData = await res.json();
+                  if (geoData[0]) {
+                    newEvent.coordinates = {
+                      lat: parseFloat(geoData[0].lat),
+                      lng: parseFloat(geoData[0].lon)
+                    };
+                    console.log("✓ Geocoded:", query, "→", newEvent.coordinates);
+                    foundCoords = true;
+                    break;
+                  }
+                } catch (err) {
+                  // Try next query
+                  continue;
+                }
+              }
+
+              if (!foundCoords) {
+                console.log("→ Using AI coordinates (street not found):", data.location);
+              }
+
+              addEventToMap();
+            })();
+          } else {
+            addEventToMap();
           }
         }
       } catch (err) {
