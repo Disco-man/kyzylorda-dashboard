@@ -95,31 +95,43 @@ GEMINI_API_URL = (
 
 def build_prompt(text: str) -> str:
     return f"""
-You are an assistant for the city of Kyzylorda, Kazakhstan. Your task is to read a short news-style incident report
+You are a precise geolocation assistant for the city of Kyzylorda, Kazakhstan. Your task is to read a short news-style incident report
 and extract structured information suitable for a city incident map.
 
-RULES:
-- Assume ALL incidents occur in or near Kyzylorda city.
-- If the location is vague (e.g. 'downtown', 'city center'), use city center coordinates: lat 44.850, lng 65.500.
-- If you don't know the exact street location, use approximate central coordinates: lat 44.850, lng 65.500.
-- ONLY provide precise street coordinates if you are confident about the location.
+CRITICAL GEOGRAPHIC CONTEXT FOR KYZYLORDA:
+Kyzylorda is located at approximately 44.8488°N, 65.4823°E. The city's urban area spans:
+- Latitude range: 44.78 to 44.87
+- Longitude range: 65.45 to 65.55
+
+MAJOR STREETS IN KYZYLORDA (use these as reference when estimating coordinates):
+- Qorqyt Ata street (Коркыт Ата): central, around 44.847, 65.522
+- Aiteke bi street (Айтеке би): central, around 44.847, 65.517
+- Auezov street (Ауэзова): central, around 44.848, 65.496
+- Abai avenue (проспект Абая): eastern area, around 44.832, 65.508
+- Zhibek zholy street (Жибек жолы): southern, around 44.782, 65.534
+
+RULES FOR COORDINATE ESTIMATION:
+- If you recognize a major street from the list above, use coordinates close to the reference point.
+- For unknown streets, place them in the city center: lat 44.848, lng 65.500
+- NEVER place coordinates outside the city bounds (44.78-44.87, 65.45-65.55)
+- Be conservative: if unsure, use city center coordinates rather than guessing incorrectly.
 - If the text does not specify duration, set duration to "unknown".
 - Choose severity from: "low", "medium", "high", "critical".
 
 Return ONLY a single JSON object with the following shape:
 {{
-  "location": "string – street / intersection / district",
+  "location": "string – street / intersection / district name",
   "event_type": "string – normalized event type such as 'repair', 'emergency', 'road_work', 'accident'",
   "severity": "low | medium | high | critical",
   "duration": "string – human readable duration estimate, or 'unknown'",
   "coordinates": {{
-    "lat": float,   // approximate latitude within Kyzylorda
-    "lng": float    // approximate longitude within Kyzylorda
+    "lat": float,   // precise latitude within Kyzylorda bounds
+    "lng": float    // precise longitude within Kyzylorda bounds
   }}
 }}
 
 IMPORTANT:
-- The coordinates MUST be plausible for Kyzylorda (around lat 44.84–44.87, lng 65.45–65.52).
+- The coordinates MUST be within Kyzylorda city bounds (lat 44.78-44.87, lng 65.45-65.55).
 - Do not add any extra fields.
 - Do not add any explanation text, markdown, or comments – only raw JSON.
 
