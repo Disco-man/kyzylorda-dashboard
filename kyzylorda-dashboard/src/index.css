@@ -1,0 +1,47 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-slate-950 text-slate-100 antialiased;
+}
+
+.glass-panel {
+  @apply bg-slate-900/60 backdrop-blur-xl border border-slate-700/60 shadow-glass-lg;
+}
+
+.map-leaflet-container .leaflet-tile {
+  filter: grayscale(0.1) brightness(0.7) contrast(1.1) saturate(1.2);
+}
+
+/* Custom scrollbar */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+}
+
+.scrollbar-track-slate-900\/20::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.2);
+  border-radius: 3px;
+}
+
+.scrollbar-thumb-slate-700\/40::-webkit-scrollbar-thumb {
+  background: rgba(51, 65, 85, 0.4);
+  border-radius: 3px;
+}
+
+.scrollbar-thumb-slate-700\/40::-webkit-scrollbar-thumb:hover {
+  background: rgba(51, 65, 85, 0.6);
+}
+
