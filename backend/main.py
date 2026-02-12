@@ -112,9 +112,13 @@ MAJOR STREETS IN KYZYLORDA (use these as reference when estimating coordinates):
 
 RULES FOR COORDINATE ESTIMATION:
 - If you recognize a major street from the list above, use coordinates close to the reference point.
-- For unknown streets, place them in the city center: lat 44.848, lng 65.500
+- For unknown streets, make an educated guess based on typical city street patterns:
+  * North side: lat 44.85-44.87, lng 65.48-65.53
+  * Central area: lat 44.84-44.85, lng 65.49-65.52
+  * South side: lat 44.78-44.82, lng 65.50-65.54
+- Distribute coordinates reasonably - don't place multiple different streets at exactly the same point.
+- Use slight variations (0.003-0.008 degrees) for different streets to create realistic spread.
 - NEVER place coordinates outside the city bounds (44.78-44.87, 65.45-65.55)
-- Be conservative: if unsure, use city center coordinates rather than guessing incorrectly.
 - If the text does not specify duration, set duration to "unknown".
 - Choose severity from: "low", "medium", "high", "critical".
 
