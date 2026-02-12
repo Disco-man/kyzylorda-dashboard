@@ -14,8 +14,5 @@ COPY . .
 # Expose port (Railway sets PORT env var)
 EXPOSE 8000
 
-# Create startup script
-RUN echo '#!/bin/bash\nuvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}' > /start.sh && chmod +x /start.sh
-
-# Start command
-CMD ["/bin/bash", "/start.sh"]
+# Start command - use Python script to read PORT env var
+CMD ["python", "start.py"]
