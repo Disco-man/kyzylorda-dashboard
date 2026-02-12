@@ -85,9 +85,9 @@ class ParsedNews(BaseModel):
 
 
 GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-# Default to a newer flash model; the code expects just the short name here,
-# e.g. "gemini-2.5-flash" (without the "models/" prefix).
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+# Use Pro model for better reasoning about street locations
+# You can also use "gemini-1.5-flash-latest" for faster but less accurate results
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
 GEMINI_API_URL = (
     f"https://generativelanguage.googleapis.com/v1/models/{GEMINI_MODEL}:generateContent"
 )
@@ -154,7 +154,14 @@ def parse_with_gemini(text: str) -> ParsedNews:
                     }
                 ]
             }
-        ]
+        ],
+        "generationConfig": {
+            "temperature": 0.4,
+            "topP": 0.95,
+            "topK": 40,
+            "maxOutputTokens": 512,
+            "candidateCount": 1
+        }
     }
 
     resp = requests.post(
