@@ -158,7 +158,7 @@ function App() {
 
   // WebSocket connection for real-time incident updates
   React.useEffect(() => {
-    const ws = new WebSocket("ws://localhost:8000/ws");
+    const ws = new WebSocket("wss://kyzylorda-dashboard-production.up.railway.app/ws");
 
     ws.onopen = () => {
       console.log("✓ WebSocket connected");
@@ -356,7 +356,7 @@ function App() {
       setIsParsingNews(true);
       setParseError("");
 
-      const response = await fetch("http://localhost:8000/parse-news", {
+      const response = await fetch("https://kyzylorda-dashboard-production.up.railway.app/parse-news", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
