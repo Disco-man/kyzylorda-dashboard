@@ -104,22 +104,18 @@ RULES:
 - If the text does not specify duration, set duration to "unknown".
 - Choose severity from: "low", "medium", "high", "critical".
 
-Return ONLY a single JSON object with the following shape:
-{{
-  "location": "string – street / intersection / district",
-  "event_type": "string – normalized event type such as 'repair', 'emergency', 'road_work', 'accident'",
-  "severity": "low | medium | high | critical",
-  "duration": "string – human readable duration estimate, or 'unknown'",
-  "coordinates": {{
-    "lat": float,   // approximate latitude within Kyzylorda
-    "lng": float    // approximate longitude within Kyzylorda
-  }}
-}}
+EXAMPLE OUTPUT (copy this format exactly):
+{{"location": "Abay Street", "event_type": "road_work", "severity": "medium", "duration": "2 hours", "coordinates": {{"lat": 44.85, "lng": 65.48}}}}
 
-IMPORTANT:
-- The coordinates MUST be plausible for Kyzylorda (around lat 44.84–44.87, lng 65.45–65.52).
-- Do not add any extra fields.
-- Do not add any explanation text, markdown, or comments – only raw JSON.
+STRICT JSON RULES:
+1. Return ONLY the JSON object - NO explanation text before or after
+2. Use double quotes for ALL strings
+3. DO NOT add comments (no // or /* */)
+4. DO NOT add trailing commas
+5. DO NOT use markdown code fences (no ```)
+6. Coordinates MUST be in Kyzylorda (lat: 44.84-44.87, lng: 65.45-65.52)
+7. event_type options: "road_work", "accident", "emergency", "repair", "road_closure"
+8. severity options: "low", "medium", "high", "critical"
 
 NEWS TEXT:
 \"\"\"{text}\"\"\""""
@@ -128,16 +124,44 @@ NEWS TEXT:
 def _extract_json(text: str) -> dict:
     """
     Extract a JSON object from the model text response.
-    Handles cases where the response is wrapped in ```json ... ``` fences.
+    Handles cases where the response is wrapped in ```json ... ``` fences or has comments.
     """
+    import re
+    
+    original_text = text
     text = text.strip()
+    
+    # Remove markdown code fences
     if text.startswith("```"):
-        # Remove first and last fenced lines
         lines = text.splitlines()
-        # drop first and last fence lines
-        inner = "\n".join(lines[1:-1]).strip()
-        text = inner
-    return json.loads(text)
+        # Remove first line (```json or ```)
+        if lines:
+            lines = lines[1:]
+        # Remove last line (```)
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    
+    # Remove inline comments that break JSON parsing
+    # Remove // comments
+    text = re.sub(r'//[^\n]*', '', text)
+    # Remove /* */ comments
+    text = re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
+    # Remove trailing commas before } or ]
+    text = re.sub(r',(\s*[}\]])', r'\1', text)
+    
+    # Try to extract JSON object if there's extra text
+    json_match = re.search(r'\{.*\}', text, re.DOTALL)
+    if json_match:
+        text = json_match.group(0)
+    
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        print(f"❌ JSON parse error: {e}")
+        print(f"📄 Original text (first 500 chars):\n{original_text[:500]}")
+        print(f"🧹 Cleaned text (first 500 chars):\n{text[:500]}")
+        raise
 
 
 def parse_with_gemini(text: str) -> ParsedNews:
