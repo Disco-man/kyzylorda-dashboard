@@ -143,17 +143,29 @@ GEMINI_API_URL = (
 
 def build_prompt(text: str) -> str:
     return f"""
-You are an assistant for Kyzylorda city, Kazakhstan. Extract incident information from news text.
+You are an assistant for Kyzylorda city, Kazakhstan (центр ~44.85°N, 65.48°E). 
+Extract incident information and provide approximate coordinates.
 
-EXAMPLE OUTPUT (copy this format exactly):
-{{"location": "улица Абая", "event_type": "road_work", "severity": "medium", "duration": "2 hours"}}
+IMPORTANT STREETS IN KYZYLORDA (for reference):
+- улица Абая / Abay Street (~44.852, 65.493)
+- улица Айтеке би / Aiteke Bi (~44.847, 65.483)
+- проспект Нуркена Абдирова / Abdirova Ave (~44.848, 65.510)
+- улица Жибек жолы / Zhibek Zholy (~44.841, 65.496)
+- улица Аль-Фараби / Al-Farabi (~44.838, 65.503)
+- улица Бейбарыс Султан / Beybars Sultan (~44.832, 65.485)
+
+EXAMPLE OUTPUT:
+{{"location": "улица Абая", "event_type": "road_work", "severity": "medium", "duration": "2 hours", "coordinates": {{"lat": 44.852, "lng": 65.493}}}}
 
 RULES:
-1. Extract the EXACT street/location name from the text (keep it in original language - Russian or Kazakh)
-2. event_type options: "road_work", "accident", "emergency", "repair", "road_closure"
-3. severity options: "low", "medium", "high", "critical"
-4. duration: extract from text or "unknown"
-5. Return ONLY valid JSON - no comments, no markdown, no extra text
+1. Extract street name from text
+2. Provide realistic coordinates within Kyzylorda (lat: 44.82-44.87, lng: 65.45-65.52)
+3. If you recognize the street from examples above, use similar coordinates
+4. If street is unknown, estimate based on Kyzylorda geography
+5. Make each incident location slightly different - don't repeat same coordinates
+6. event_type: "road_work", "accident", "emergency", "repair", "road_closure"
+7. severity: "low", "medium", "high", "critical"
+8. Return ONLY valid JSON - no comments, no markdown
 
 NEWS TEXT:
 \"\"\"{text}\"\"\""""
@@ -217,9 +229,9 @@ def parse_with_gemini(text: str) -> ParsedNews:
             }
         ],
         "generationConfig": {
-            "temperature": 0.7,
+            "temperature": 1.0,
             "topP": 0.95,
-            "topK": 40,
+            "topK": 64,
             "maxOutputTokens": 512,
             "candidateCount": 1
         }
@@ -246,13 +258,7 @@ def parse_with_gemini(text: str) -> ParsedNews:
 
     data = _extract_json(model_text)
     
-    # Get real coordinates from Nominatim instead of relying on Gemini
-    location = data.get("location", "")
-    coordinates = geocode_street(location)
-    
-    # Add coordinates to data
-    data["coordinates"] = coordinates
-    
+    # Gemini now provides coordinates directly based on street knowledge
     return ParsedNews(
         **data,
         raw_model_response={
