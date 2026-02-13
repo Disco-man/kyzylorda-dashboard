@@ -175,6 +175,14 @@ async def parse_news(payload: NewsRequest):
         coordinates=Coordinates(lat=coords["lat"], lng=coords["lng"])
     )
 
+@app.post("/broadcast-incident")
+async def broadcast_incident(incident: ParsedNews):
+    """
+    Endpoint for Telegram monitor to broadcast parsed incidents to all WebSocket clients.
+    """
+    await manager.broadcast(incident.dict())
+    return {"status": "broadcasted", "clients": len(manager.active_connections)}
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
