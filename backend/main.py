@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from typing import Literal, Optional, List
 
 import requests
@@ -8,62 +9,54 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
-
 load_dotenv()
 
 app = FastAPI(title="Kyzylorda Incident Parser API")
 
+# --- 1. GEOCODING SERVICE (REAL MAP DATA) ---
+def geocode_street(location: str) -> dict:
+    """
+    Превращает название улицы в координаты через OpenStreetMap.
+    """
+    # Очищаем название от лишнего мусора, чтобы поиск работал лучше
+    clean_loc = location.replace("улица", "").replace("просп.", "").strip()
+    
+    queries = [
+        f"{location}, Кызылорда",          # Полный запрос
+        f"{clean_loc}, Кызылорда",         # Без типа улицы
+        f"{clean_loc}, Kyzylorda",         # На латинице
+    ]
 
-# Geocoding via Nominatim
-def geocode_street(location: str) -> Optional[dict]:
-    """
-    Get coordinates for a street in Kyzylorda using OpenStreetMap Nominatim.
-    Returns {"lat": float, "lng": float} or None if not found.
-    """
-    try:
-        # Try multiple search strategies
-        search_queries = [
-            f"{location}, Кызылорда, Казахстан",
-            f"{location}, Kyzylorda, Kazakhstan",
-            f"{location.replace('улица', '').strip()}, Кызылорда",
-            f"{location.replace('street', '').strip()}, Kyzylorda",
-        ]
-        
-        for query in search_queries:
+    headers = {"User-Agent": "KyzylordaHackathon/1.0"}
+
+    print(f"🔍 Searching coords for: {location}")
+
+    for q in queries:
+        try:
             url = "https://nominatim.openstreetmap.org/search"
-            params = {
-                "q": query,
-                "format": "json",
-                "limit": 1,
-                "addressdetails": 1,
-            }
-            headers = {
-                "User-Agent": "KyzylordaDashboard/1.0"
-            }
-            
-            response = requests.get(url, params=params, headers=headers, timeout=5)
-            if response.status_code == 200:
-                data = response.json()
-                if data:
-                    result = data[0]
-                    lat = float(result["lat"])
-                    lon = float(result["lon"])
-                    
-                    # Verify it's in Kyzylorda area (rough bounds)
-                    if 44.7 < lat < 45.0 and 65.3 < lon < 65.7:
-                        print(f"✓ Geocoded '{location}' → ({lat}, {lon})")
-                        return {"lat": lat, "lng": lon}
-        
-        # If all queries fail, return city center
-        print(f"⚠ Geocoding failed for '{location}' - using city center")
-        return {"lat": 44.8488, "lng": 65.4823}
-        
-    except Exception as e:
-        print(f"❌ Geocoding error: {e}")
-        return {"lat": 44.8488, "lng": 65.4823}
+            resp = requests.get(url, params={"q": q, "format": "json", "limit": 1}, headers=headers, timeout=3)
+            if resp.status_code == 200 and resp.json():
+                data = resp.json()[0]
+                lat, lng = float(data["lat"]), float(data["lon"])
+                
+                # Проверка, что мы внутри Кызылорды (примерно)
+                if 44.70 < lat < 44.95 and 65.40 < lng < 65.65:
+                    print(f"✅ Found: {lat}, {lng}")
+                    return {"lat": lat, "lng": lng}
+        except Exception:
+            continue
 
+    # Если не нашли — возвращаем центр города (но со смещением, чтобы точки не слипались)
+    print("⚠️ Coordinates not found, using default center")
+    import random
+    base_lat, base_lng = 44.8488, 65.4823
+    # Добавляем микро-шум, чтобы точки не лежали одна на другой
+    return {
+        "lat": base_lat + random.uniform(-0.005, 0.005), 
+        "lng": base_lng + random.uniform(-0.005, 0.005)
+    }
 
-# WebSocket connection manager
+# --- 2. WEBSOCKET MANAGER ---
 class ConnectionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
@@ -71,249 +64,124 @@ class ConnectionManager:
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.append(websocket)
-        print(f"✓ WebSocket client connected. Total: {len(self.active_connections)}")
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
-        print(f"✗ WebSocket client disconnected. Total: {len(self.active_connections)}")
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
 
     async def broadcast(self, message: dict):
-        """Broadcast a message to all connected clients."""
         for connection in self.active_connections:
             try:
                 await connection.send_json(message)
-            except Exception as e:
-                print(f"Failed to send to WebSocket client: {e}")
-
+            except Exception:
+                pass
 
 manager = ConnectionManager()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "*",  # loosen as needed
-    ],
+    allow_origins=["*"], # Разрешаем всем для хакатона
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-
+# --- 3. MODELS ---
 class NewsRequest(BaseModel):
-    text: str = Field(..., description="Raw news text from a channel / feed.")
-
+    text: str
 
 class Coordinates(BaseModel):
-    lat: float = Field(..., description="Approximate latitude within Kyzylorda.")
-    lng: float = Field(..., description="Approximate longitude within Kyzylorda.")
-
-
-Severity = Literal["low", "medium", "high", "critical"]
-
+    lat: float
+    lng: float
 
 class ParsedNews(BaseModel):
-    location: str = Field(
-        ..., description="Street, intersection, or district mentioned in the news."
-    )
-    event_type: str = Field(
-        ...,
-        description="Canonical event type, e.g. 'repair', 'emergency', 'road_work', 'accident'.",
-    )
-    severity: Severity = Field(
-        ..., description="Overall severity level: low, medium, high, or critical."
-    )
-    duration: str = Field(
-        ...,
-        description="Human-readable estimated duration (e.g. '30 minutes', '2-3 hours', 'unknown').",
-    )
+    location: str
+    event_type: str
+    severity: str
+    duration: str
+    summary: str # Краткое описание для попапа
     coordinates: Coordinates
-    # Optional raw model output for debugging / future tuning
-    raw_model_response: Optional[dict] = None
 
-
+# --- 4. AI LOGIC ---
 GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-# Use flash model - good balance of speed and accuracy
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-GEMINI_API_URL = (
-    f"https://generativelanguage.googleapis.com/v1/models/{GEMINI_MODEL}:generateContent"
-)
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
 
+def clean_json_string(text: str) -> str:
+    """Очищает ответ ИИ от markdown и комментариев"""
+    # Удаляем ```json и ```
+    text = re.sub(r'```json\s*', '', text)
+    text = re.sub(r'```', '', text)
+    # Ищем текст от первой { до последней }
+    match = re.search(r'(\{.*\})', text, re.DOTALL)
+    if match:
+        return match.group(1)
+    return text
 
-def build_prompt(text: str) -> str:
-    return f"""
-You are an assistant for Kyzylorda city, Kazakhstan (центр ~44.85°N, 65.48°E). 
-Extract incident information and provide approximate coordinates.
+def parse_with_gemini(news_text: str) -> dict:
+    prompt = f"""
+    You are a smart city assistant for Kyzylorda.
+    Analyze the following news text and extract structured data.
+    
+    TEXT: "{news_text}"
 
-IMPORTANT STREETS IN KYZYLORDA (for reference):
-- улица Абая / Abay Street (~44.852, 65.493)
-- улица Айтеке би / Aiteke Bi (~44.847, 65.483)
-- проспект Нуркена Абдирова / Abdirova Ave (~44.848, 65.510)
-- улица Жибек жолы / Zhibek Zholy (~44.841, 65.496)
-- улица Аль-Фараби / Al-Farabi (~44.838, 65.503)
-- улица Бейбарыс Султан / Beybars Sultan (~44.832, 65.485)
-
-EXAMPLE OUTPUT:
-{{"location": "улица Абая", "event_type": "road_work", "severity": "medium", "duration": "2 hours", "coordinates": {{"lat": 44.852, "lng": 65.493}}}}
-
-RULES:
-1. Extract street name from text
-2. Provide realistic coordinates within Kyzylorda (lat: 44.82-44.87, lng: 65.45-65.52)
-3. If you recognize the street from examples above, use similar coordinates
-4. If street is unknown, estimate based on Kyzylorda geography
-5. Make each incident location slightly different - don't repeat same coordinates
-6. event_type: "road_work", "accident", "emergency", "repair", "road_closure"
-7. severity: "low", "medium", "high", "critical"
-8. Return ONLY valid JSON - no comments, no markdown
-
-NEWS TEXT:
-\"\"\"{text}\"\"\""""
-
-
-def _extract_json(text: str) -> dict:
+    RETURN JSON ONLY using this structure:
+    {{
+        "location_search_query": "Name of the street or place in Russian for map search (e.g. 'улица Абая')",
+        "event_type": "One of: repair, accident, road_closed, event, other",
+        "severity": "One of: low, medium, high",
+        "duration": "Estimated duration (e.g. '2 часа', 'до вечера')",
+        "summary": "Short title for the map popup (max 5 words, Russian)"
+    }}
     """
-    Extract a JSON object from the model text response.
-    Handles cases where the response is wrapped in ```json ... ``` fences or has comments.
-    """
-    import re
     
-    original_text = text
-    text = text.strip()
-    
-    # Remove markdown code fences
-    if text.startswith("```"):
-        lines = text.splitlines()
-        # Remove first line (```json or ```)
-        if lines:
-            lines = lines[1:]
-        # Remove last line (```)
-        if lines and lines[-1].strip().startswith("```"):
-            lines = lines[:-1]
-        text = "\n".join(lines).strip()
-    
-    # Remove inline comments that break JSON parsing
-    # Remove // comments
-    text = re.sub(r'//[^\n]*', '', text)
-    # Remove /* */ comments
-    text = re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
-    # Remove trailing commas before } or ]
-    text = re.sub(r',(\s*[}\]])', r'\1', text)
-    
-    # Try to extract JSON object if there's extra text
-    json_match = re.search(r'\{.*\}', text, re.DOTALL)
-    if json_match:
-        text = json_match.group(0)
-    
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError as e:
-        print(f"❌ JSON parse error: {e}")
-        print(f"📄 Original text (first 500 chars):\n{original_text[:500]}")
-        print(f"🧹 Cleaned text (first 500 chars):\n{text[:500]}")
-        raise
-
-
-def parse_with_gemini(text: str) -> ParsedNews:
-    if not GEMINI_API_KEY:
-        raise ValueError("GOOGLE_API_KEY (or GEMINI_API_KEY) is not set.")
-
     payload = {
-        "contents": [
-            {
-                "parts": [
-                    {
-                        "text": build_prompt(text),
-                    }
-                ]
-            }
-        ],
-        "generationConfig": {
-            "temperature": 1.0,
-            "topP": 0.95,
-            "topK": 64,
-            "maxOutputTokens": 512,
-            "candidateCount": 1
-        }
+        "contents": [{"parts": [{"text": prompt}]}]
     }
-
-    resp = requests.post(
-        GEMINI_API_URL,
-        headers={
-            "Content-Type": "application/json",
-            "x-goog-api-key": GEMINI_API_KEY,
-        },
-        json=payload,
-        timeout=30,
-    )
-
-    if resp.status_code != 200:
-        raise ValueError(f"Gemini API error {resp.status_code}: {resp.text}")
-
-    resp_json = resp.json()
-    try:
-        model_text = resp_json["candidates"][0]["content"]["parts"][0]["text"]
-    except (KeyError, IndexError) as exc:
-        raise ValueError(f"Unexpected Gemini response: {resp_json}") from exc
-
-    data = _extract_json(model_text)
     
-    # Gemini now provides coordinates directly based on street knowledge
-    return ParsedNews(
-        **data,
-        raw_model_response={
-            "provider": "gemini",
-            "model": GEMINI_MODEL,
-        },
-    )
+    resp = requests.post(GEMINI_URL, json=payload, headers={"Content-Type": "application/json"}, timeout=10)
+    
+    if resp.status_code != 200:
+        raise HTTPException(status_code=500, detail=f"AI Error: {resp.text}")
+        
+    try:
+        raw_text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+        json_str = clean_json_string(raw_text)
+        return json.loads(json_str)
+    except Exception as e:
+        print(f"❌ JSON Parse Error. Raw text: {raw_text}")
+        raise HTTPException(status_code=500, detail="Failed to parse AI response")
 
+# --- 5. ENDPOINTS ---
 
 @app.post("/parse-news", response_model=ParsedNews)
-async def parse_news(payload: NewsRequest) -> ParsedNews:
-    """
-    Parse a raw news string into structured incident data that can be rendered on the Kyzylorda map.
-    """
-    if not payload.text.strip():
-        raise HTTPException(status_code=400, detail="Text must not be empty.")
-
-    try:
-        return parse_with_gemini(payload.text)
-    except Exception as exc:
-        # In a real system, log full details to your logging solution.
-        raise HTTPException(
-            status_code=500, detail=f"Failed to parse news text: {exc}"
-        ) from exc
-
+async def parse_news(payload: NewsRequest):
+    # 1. Спрашиваем ИИ (получаем адрес текстом)
+    ai_data = parse_with_gemini(payload.text)
+    
+    # 2. Ищем реальные координаты через OpenStreetMap
+    search_query = ai_data.get("location_search_query", "Kyzylorda")
+    coords = geocode_street(search_query)
+    
+    # 3. Собираем итоговый ответ
+    return ParsedNews(
+        location=ai_data.get("location_search_query"),
+        event_type=ai_data.get("event_type", "other"),
+        severity=ai_data.get("severity", "low"),
+        duration=ai_data.get("duration", "неизвестно"),
+        summary=ai_data.get("summary", "Событие"),
+        coordinates=Coordinates(lat=coords["lat"], lng=coords["lng"])
+    )
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    """
-    WebSocket endpoint for real-time incident updates.
-    Frontend connects here to receive new parsed incidents instantly.
-    """
     await manager.connect(websocket)
     try:
-        # Keep connection alive
         while True:
-            # Wait for any message from client (just to keep connection alive)
-            data = await websocket.receive_text()
-            # Echo back as confirmation
-            await websocket.send_json({"type": "ping", "status": "connected"})
+            await websocket.receive_text() # keep alive
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
-
-@app.post("/broadcast-incident")
-async def broadcast_incident(incident: dict):
-    """
-    Internal endpoint for telegram_monitor.py to broadcast new incidents.
-    """
-    await manager.broadcast({"type": "new_incident", "data": incident})
-    return {"status": "broadcasted", "connections": len(manager.active_connections)}
-
-
 if __name__ == "__main__":
     import uvicorn
-
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
+    uvicorn.run(app, host="0.0.0.0", port=8000)
 
