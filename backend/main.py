@@ -180,7 +180,13 @@ async def broadcast_incident(incident: ParsedNews):
     """
     Endpoint for Telegram monitor to broadcast parsed incidents to all WebSocket clients.
     """
-    await manager.broadcast(incident.dict())
+    # Wrap in expected format for frontend
+    message = {
+        "type": "new_incident",
+        "data": incident.model_dump() if hasattr(incident, 'model_dump') else incident.dict()
+    }
+    await manager.broadcast(message)
+    print(f"✅ Broadcasted incident to {len(manager.active_connections)} clients")
     return {"status": "broadcasted", "clients": len(manager.active_connections)}
 
 @app.websocket("/ws")
