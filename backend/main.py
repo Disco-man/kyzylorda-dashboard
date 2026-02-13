@@ -125,14 +125,16 @@ def parse_with_gemini(news_text: str) -> dict:
     
     TEXT: "{news_text}"
 
-    RETURN JSON ONLY using this structure:
+    RETURN JSON ONLY using this structure (NO null values allowed):
     {{
         "location_search_query": "Name of the street or place in Russian for map search (e.g. 'улица Абая')",
         "event_type": "One of: repair, accident, road_closed, event, other",
         "severity": "One of: low, medium, high",
-        "duration": "Estimated duration (e.g. '2 часа', 'до вечера')",
+        "duration": "Estimated duration as STRING (e.g. '2 часа', 'до вечера', 'неизвестно')",
         "summary": "Short title for the map popup (max 5 words, Russian)"
     }}
+    
+    IMPORTANT: If duration is not specified in text, use "неизвестно" instead of null.
     """
     
     payload = {
@@ -165,11 +167,11 @@ async def parse_news(payload: NewsRequest):
     
     # 3. Собираем итоговый ответ
     return ParsedNews(
-        location=ai_data.get("location_search_query"),
-        event_type=ai_data.get("event_type", "other"),
-        severity=ai_data.get("severity", "low"),
-        duration=ai_data.get("duration", "неизвестно"),
-        summary=ai_data.get("summary", "Событие"),
+        location=ai_data.get("location_search_query") or "Неизвестно",
+        event_type=ai_data.get("event_type") or "other",
+        severity=ai_data.get("severity") or "low",
+        duration=ai_data.get("duration") or "неизвестно",
+        summary=ai_data.get("summary") or "Событие",
         coordinates=Coordinates(lat=coords["lat"], lng=coords["lng"])
     )
 
