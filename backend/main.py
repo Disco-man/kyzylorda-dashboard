@@ -14,6 +14,55 @@ load_dotenv()
 app = FastAPI(title="Kyzylorda Incident Parser API")
 
 
+# Geocoding via Nominatim
+def geocode_street(location: str) -> Optional[dict]:
+    """
+    Get coordinates for a street in Kyzylorda using OpenStreetMap Nominatim.
+    Returns {"lat": float, "lng": float} or None if not found.
+    """
+    try:
+        # Try multiple search strategies
+        search_queries = [
+            f"{location}, Кызылорда, Казахстан",
+            f"{location}, Kyzylorda, Kazakhstan",
+            f"{location.replace('улица', '').strip()}, Кызылорда",
+            f"{location.replace('street', '').strip()}, Kyzylorda",
+        ]
+        
+        for query in search_queries:
+            url = "https://nominatim.openstreetmap.org/search"
+            params = {
+                "q": query,
+                "format": "json",
+                "limit": 1,
+                "addressdetails": 1,
+            }
+            headers = {
+                "User-Agent": "KyzylordaDashboard/1.0"
+            }
+            
+            response = requests.get(url, params=params, headers=headers, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                if data:
+                    result = data[0]
+                    lat = float(result["lat"])
+                    lon = float(result["lon"])
+                    
+                    # Verify it's in Kyzylorda area (rough bounds)
+                    if 44.7 < lat < 45.0 and 65.3 < lon < 65.7:
+                        print(f"✓ Geocoded '{location}' → ({lat}, {lon})")
+                        return {"lat": lat, "lng": lon}
+        
+        # If all queries fail, return city center
+        print(f"⚠ Geocoding failed for '{location}' - using city center")
+        return {"lat": 44.8488, "lng": 65.4823}
+        
+    except Exception as e:
+        print(f"❌ Geocoding error: {e}")
+        return {"lat": 44.8488, "lng": 65.4823}
+
+
 # WebSocket connection manager
 class ConnectionManager:
     def __init__(self):
@@ -94,28 +143,17 @@ GEMINI_API_URL = (
 
 def build_prompt(text: str) -> str:
     return f"""
-You are an assistant for the city of Kyzylorda, Kazakhstan. Your task is to read a short news-style incident report
-and extract structured information suitable for a city incident map.
-
-RULES:
-- Assume ALL incidents occur in or near Kyzylorda city.
-- If the location is vague (e.g. 'downtown', 'city center'), infer a reasonable location within Kyzylorda.
-- For coordinates, choose an approximate point that lies within the urban area of Kyzylorda.
-- If the text does not specify duration, set duration to "unknown".
-- Choose severity from: "low", "medium", "high", "critical".
+You are an assistant for Kyzylorda city, Kazakhstan. Extract incident information from news text.
 
 EXAMPLE OUTPUT (copy this format exactly):
-{{"location": "Abay Street", "event_type": "road_work", "severity": "medium", "duration": "2 hours", "coordinates": {{"lat": 44.85, "lng": 65.48}}}}
+{{"location": "улица Абая", "event_type": "road_work", "severity": "medium", "duration": "2 hours"}}
 
-STRICT JSON RULES:
-1. Return ONLY the JSON object - NO explanation text before or after
-2. Use double quotes for ALL strings
-3. DO NOT add comments (no // or /* */)
-4. DO NOT add trailing commas
-5. DO NOT use markdown code fences (no ```)
-6. Coordinates MUST be in Kyzylorda (lat: 44.84-44.87, lng: 65.45-65.52)
-7. event_type options: "road_work", "accident", "emergency", "repair", "road_closure"
-8. severity options: "low", "medium", "high", "critical"
+RULES:
+1. Extract the EXACT street/location name from the text (keep it in original language - Russian or Kazakh)
+2. event_type options: "road_work", "accident", "emergency", "repair", "road_closure"
+3. severity options: "low", "medium", "high", "critical"
+4. duration: extract from text or "unknown"
+5. Return ONLY valid JSON - no comments, no markdown, no extra text
 
 NEWS TEXT:
 \"\"\"{text}\"\"\""""
@@ -207,6 +245,14 @@ def parse_with_gemini(text: str) -> ParsedNews:
         raise ValueError(f"Unexpected Gemini response: {resp_json}") from exc
 
     data = _extract_json(model_text)
+    
+    # Get real coordinates from Nominatim instead of relying on Gemini
+    location = data.get("location", "")
+    coordinates = geocode_street(location)
+    
+    # Add coordinates to data
+    data["coordinates"] = coordinates
+    
     return ParsedNews(
         **data,
         raw_model_response={
